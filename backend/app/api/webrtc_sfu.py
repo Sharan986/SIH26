@@ -3,8 +3,17 @@ import logging
 import asyncio
 from typing import Dict, Optional, Set
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, MediaStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer, MediaStreamTrack
 from aiortc.contrib.media import MediaRelay
+
+# ICE config for server-side aiortc PeerConnections.
+# STUN lets Render discover its public IP so phones can reach it.
+SFU_ICE_CONFIG = RTCConfiguration(
+    iceServers=[
+        RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+        RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+    ]
+)
 
 from app.model.detector import VoiceGuardDetector
 from app.audio.preprocessing import AudioPreprocessor
@@ -86,13 +95,17 @@ class SFUClient:
 clients: Dict[str, SFUClient] = {}
 
 async def handle_offer(client: SFUClient, offer_sdp: dict):
-    pc = RTCPeerConnection()
+    pc = RTCPeerConnection(configuration=SFU_ICE_CONFIG)
     client.pc = pc
 
     @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
-        logger.info(f"ICE state for {client.client_id}: {pc.iceConnectionState}")
-        if pc.iceConnectionState == "failed":
+        state = pc.iceConnectionState
+        logger.info(f"ICE state for {client.client_id}: {state}")
+        if state == "connected" or state == "completed":
+            logger.info(f"✅ ICE connected for {client.client_id}! Audio should be flowing.")
+        elif state == "failed":
+            logger.warning(f"ICE failed for {client.client_id}. Closing PC.")
             await pc.close()
 
     @pc.on("track")
