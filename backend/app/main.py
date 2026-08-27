@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.model.detector import VoiceGuardDetector
-from app.api import health, analyze, websocket, signaling, webrtc_sfu
+from app.api import health, analyze, websocket, signaling
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,7 +40,6 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(analyze.router, tags=["Analysis"])
 app.include_router(websocket.router, tags=["WebSocket"])
 app.include_router(signaling.router, tags=["WebRTC Signaling"])
-app.include_router(webrtc_sfu.router, tags=["WebRTC SFU"])
 
 if __name__ == "__main__":
     import uvicorn

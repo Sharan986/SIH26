@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Dict
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.audio.preprocessing import AudioPreprocessor
 from app.audio.buffer import AudioStreamBuffer
@@ -8,10 +9,37 @@ from app.model.detector import VoiceGuardDetector
 logger = logging.getLogger("voiceguard.ws")
 router = APIRouter()
 
-@router.websocket("/ws/analyze")
-async def websocket_analyze_stream(websocket: WebSocket):
-    await websocket.accept()
-    logger.info("WebSocket client connected to /ws/analyze")
+class ConnectionManager:
+    def __init__(self):
+        # Maps session_id -> list of (websocket, client_id)
+        self.active_sessions: Dict[str, list] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str, client_id: str):
+        await websocket.accept()
+        if session_id not in self.active_sessions:
+            self.active_sessions[session_id] = []
+        self.active_sessions[session_id].append((websocket, client_id))
+
+    def disconnect(self, websocket: WebSocket, session_id: str):
+        if session_id in self.active_sessions:
+            self.active_sessions[session_id] = [c for c in self.active_sessions[session_id] if c[0] != websocket]
+            if not self.active_sessions[session_id]:
+                del self.active_sessions[session_id]
+
+    async def broadcast(self, message: dict, session_id: str):
+        if session_id in self.active_sessions:
+            for connection, _ in self.active_sessions[session_id]:
+                try:
+                    await connection.send_text(json.dumps(message))
+                except Exception:
+                    pass
+
+manager = ConnectionManager()
+
+@router.websocket("/ws/analyze/{session_id}/{client_id}")
+async def websocket_analyze_stream(websocket: WebSocket, session_id: str, client_id: str):
+    await manager.connect(websocket, session_id, client_id)
+    logger.info(f"WebSocket client {client_id} connected to session {session_id}")
 
     preprocessor = AudioPreprocessor()
     buffer = AudioStreamBuffer(sample_rate=16000, window_duration_sec=5.0)
@@ -74,7 +102,10 @@ async def websocket_analyze_stream(websocket: WebSocket):
                     prediction = detector.predict(processed, sample_rate=16000)
                     resp_dict = prediction.model_dump()
                     resp_dict["rms"] = round(rms, 4)
-                    await websocket.send_text(json.dumps(resp_dict))
+                    resp_dict["speaker_id"] = client_id
+                    
+                    # Broadcast prediction to all clients in the session
+                    await manager.broadcast(resp_dict, session_id)
 
             elif msg_type == "stop":
                 buffer.clear()
@@ -87,7 +118,7 @@ async def websocket_analyze_stream(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "pong"}))
 
     except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
+        logger.info(f"WebSocket client {client_id} disconnected from session {session_id}")
     except Exception as e:
         logger.error(f"WebSocket error: {e}", exc_info=True)
         try:
@@ -99,4 +130,5 @@ async def websocket_analyze_stream(websocket: WebSocket):
         except Exception:
             pass
     finally:
+        manager.disconnect(websocket, session_id)
         buffer.clear()

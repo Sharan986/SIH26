@@ -4,11 +4,12 @@ import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, mediaDevices
 import { audioStreamProcessor } from '../services/audioStreamProcessor';
 import { settingsStore } from '../store/settingsStore';
 import { analysisStore } from '../store/analysisStore';
+import { AnalysisService } from '../services/analysisService';
 import { useRouter } from 'expo-router';
 
 export type CallState = 'idle' | 'ringing' | 'connected' | 'ended';
 
-// Use minimal STUN since SFU will provide its own host candidates
+// P2P requires STUN
 const ICE_SERVERS = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -44,14 +45,16 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const wsRef = useRef<WebSocket | null>(null);
     const pcRef = useRef<RTCPeerConnection | null>(null);
-    const timerRef = useRef<any>(null);
+    
+    // Store incoming offer until accepted
+    const incomingOfferRef = useRef<any>(null);
 
     const callerIdRef = useRef<string | null>(null);
     const receiverIdRef = useRef<string | null>(null);
 
     const getSignalingUrl = () => {
         const apiUrl = settingsStore.getState().apiUrl || 'http://localhost:8000';
-        return apiUrl.replace(/^http/, 'ws') + '/ws/sfu';
+        return apiUrl.replace(/^http/, 'ws') + '/ws/signaling';
     };
 
     const sendSignalingMessage = (message: any) => {
@@ -60,46 +63,52 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
     };
 
+    const getSessionId = () => {
+        const id1 = clientId;
+        const id2 = callerIdRef.current || receiverIdRef.current;
+        if (!id2) return `call_${Date.now()}`;
+        return `call_${[id1, id2].sort().join('_')}`;
+    };
+
+    const startHybridAnalysis = () => {
+        if (!analysisStore.getState().isAnalyzing) {
+            const sessionId = getSessionId();
+            AnalysisService.start(sessionId, clientId);
+        }
+    };
+
     const setupPCListeners = (pc: RTCPeerConnection) => {
         pc.onicecandidate = (event: any) => {
             if (event.candidate) {
-                // SFU doesn't strictly need trickle ICE, but sending just in case
+                const target = callerIdRef.current || receiverIdRef.current;
                 sendSignalingMessage({
-                    type: 'sfu:ice-candidate',
+                    type: 'call:ice-candidate',
+                    target: target,
                     candidate: event.candidate,
                 });
             }
         };
 
         pc.ontrack = (event: any) => {
-            console.log('[WebRTC SFU] Received remote track');
+            console.log('[WebRTC P2P] Received remote track');
             if (event.streams && event.streams[0]) {
                 setRemoteStream(event.streams[0]);
-                audioStreamProcessor.start(event.streams[0]);
+                // We no longer send the remote stream to audioStreamProcessor,
+                // because each client sends their own local mic audio via WebSocket.
             }
         };
 
         pc.oniceconnectionstatechange = () => {
             const state = pc.iceConnectionState;
-            console.log('[WebRTC SFU] ICE Connection State:', state);
+            console.log('[WebRTC P2P] ICE Connection State:', state);
             if (state === 'connected' || state === 'completed') {
-                console.log('[WebRTC SFU] ✅ ICE Connected to SFU!');
+                console.log('[WebRTC P2P] ✅ ICE Connected!');
                 setCallState('connected');
                 
-                // Trigger Scam Prevention UI directly (SFU handles audio processing)
-                if (!analysisStore.getState().isAnalyzing) {
-                    analysisStore.startSession(`webrtc_${Date.now()}`);
-                    analysisStore.setWsStatus('CONNECTED', 'Connected to SFU AI');
-                    analysisStore.setScreenState('PROCESSING');
-                    
-                    const startTime = Date.now();
-                    timerRef.current = setInterval(() => {
-                        const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                        analysisStore.setState({ callDurationSec: elapsed, analysisDurationSec: elapsed });
-                    }, 1000);
-
-                    router.push('/live' as any);
-                }
+                // Start the WebSocket AI analysis when P2P connects
+                startHybridAnalysis();
+                router.push('/live' as any);
+                
             } else if (state === 'failed' || state === 'closed') {
                 cleanupCall();
             }
@@ -123,7 +132,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             });
             return stream;
         } catch (e) {
-            console.error('[WebRTC SFU] Failed to get local stream', e);
+            console.error('[WebRTC P2P] Failed to get local stream', e);
             return null;
         }
     };
@@ -133,106 +142,127 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setClientId(id);
 
         const url = `${getSignalingUrl()}/${id}`;
-        console.log('[WebRTC SFU] Connecting to', url);
+        console.log('[WebRTC P2P] Connecting to', url);
         
         const ws = new WebSocket(url);
-        ws.onopen = () => console.log('[WebRTC SFU] Connected as', id);
+        ws.onopen = () => console.log('[WebRTC P2P] Connected as', id);
         ws.onmessage = async (event) => {
             try {
                 const data = JSON.parse(event.data);
                 await handleSignalingMessage(data);
             } catch (e) {
-                console.error('[WebRTC SFU] Failed to parse signaling message', e);
+                console.error('[WebRTC P2P] Failed to parse signaling message', e);
             }
         };
-        ws.onerror = (e) => console.error('[WebRTC SFU] Signaling error', e);
-        ws.onclose = () => console.log('[WebRTC SFU] Signaling disconnected');
+        ws.onerror = (e) => console.error('[WebRTC P2P] Signaling error', e);
+        ws.onclose = () => console.log('[WebRTC P2P] Signaling disconnected');
         wsRef.current = ws;
     };
 
     const handleSignalingMessage = async (data: any) => {
-        const { type, caller, sdp } = data;
+        const { type, sender, sdp, candidate } = data;
 
-        if (type === 'sfu:incoming') {
-            console.log('[WebRTC SFU] Incoming call from', caller);
-            callerIdRef.current = caller;
-            setCallerId(caller);
+        if (type === 'call:offer') {
+            console.log('[WebRTC P2P] Incoming call offer from', sender);
+            callerIdRef.current = sender;
+            setCallerId(sender);
+            incomingOfferRef.current = sdp;
             setCallState('ringing');
         }
-        else if (type === 'sfu:accepted') {
-            console.log('[WebRTC SFU] Call accepted, negotiating with SFU');
-            const pc = new RTCPeerConnection(ICE_SERVERS);
-            setupPCListeners(pc);
-            pcRef.current = pc;
-            
-            const stream = await setupLocalStream(pc);
-            if (!stream) {
-                cleanupCall();
-                return;
-            }
-
-            try {
-                const offer = await pc.createOffer({});
-                await pc.setLocalDescription(offer);
-                sendSignalingMessage({
-                    type: 'sfu:offer',
-                    sdp: offer
-                });
-            } catch (e) {
-                console.error('[WebRTC SFU] Error creating offer', e);
-                cleanupCall();
-            }
-        }
-        else if (type === 'sfu:answer') {
-            console.log('[WebRTC SFU] Received SFU answer');
+        else if (type === 'call:answer') {
+            console.log('[WebRTC P2P] Received answer from', sender);
             if (pcRef.current) {
                 await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
             }
         }
-        else if (type === 'sfu:renegotiate') {
-            console.log('[WebRTC SFU] Received SFU renegotiation offer (downlink ready)');
-            if (pcRef.current) {
-                await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
-                const answer = await pcRef.current.createAnswer();
-                await pcRef.current.setLocalDescription(answer);
-                sendSignalingMessage({
-                    type: 'sfu:answer',
-                    sdp: answer
-                });
+        else if (type === 'call:ice-candidate') {
+            if (pcRef.current && candidate) {
+                try {
+                    await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                } catch (e) {
+                    console.error('[WebRTC P2P] Error adding ICE candidate', e);
+                }
             }
         }
-        else if (type === 'sfu:ended' || type === 'sfu:reject') {
+        else if (type === 'call:ended' || type === 'call:reject') {
             cleanupCall();
-        }
-        else if (type === 'sfu:prediction') {
-            // Forward AI prediction from SFU directly to UI!
-            analysisStore.addPrediction(data);
-            analysisStore.setAudioLevel(data.rms, data.rms * 100);
         }
     };
 
     const startCall = async (targetId: string): Promise<boolean> => {
         receiverIdRef.current = targetId;
         setReceiverId(targetId);
-        sendSignalingMessage({ type: 'sfu:dial', target: targetId });
         setCallState('connected'); // Optimistic
-        return true;
+        
+        const pc = new RTCPeerConnection(ICE_SERVERS);
+        setupPCListeners(pc);
+        pcRef.current = pc;
+        
+        const stream = await setupLocalStream(pc);
+        if (!stream) {
+            cleanupCall();
+            return false;
+        }
+
+        try {
+            const offer = await pc.createOffer({});
+            await pc.setLocalDescription(offer);
+            sendSignalingMessage({
+                type: 'call:offer',
+                target: targetId,
+                sdp: offer
+            });
+            return true;
+        } catch (e) {
+            console.error('[WebRTC P2P] Error creating offer', e);
+            cleanupCall();
+            return false;
+        }
     };
 
     const acceptCall = async () => {
         const caller = callerIdRef.current;
-        if (!caller) return;
-        sendSignalingMessage({ type: 'sfu:accept', caller });
+        if (!caller || !incomingOfferRef.current) return;
         setCallState('connected');
+
+        const pc = new RTCPeerConnection(ICE_SERVERS);
+        setupPCListeners(pc);
+        pcRef.current = pc;
+        
+        const stream = await setupLocalStream(pc);
+        if (!stream) {
+            cleanupCall();
+            return;
+        }
+
+        try {
+            await pc.setRemoteDescription(new RTCSessionDescription(incomingOfferRef.current));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            sendSignalingMessage({
+                type: 'call:answer',
+                target: caller,
+                sdp: answer
+            });
+        } catch (e) {
+            console.error('[WebRTC P2P] Error creating answer', e);
+            cleanupCall();
+        }
     };
 
     const rejectCall = () => {
-        sendSignalingMessage({ type: 'sfu:reject' });
+        const caller = callerIdRef.current;
+        if (caller) {
+            sendSignalingMessage({ type: 'call:reject', target: caller });
+        }
         cleanupCall();
     };
 
     const endCall = () => {
-        sendSignalingMessage({ type: 'sfu:end' });
+        const target = callerIdRef.current || receiverIdRef.current;
+        if (target) {
+            sendSignalingMessage({ type: 'call:end', target: target });
+        }
         cleanupCall();
     };
 
@@ -240,6 +270,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setCallState('idle');
         callerIdRef.current = null;
         receiverIdRef.current = null;
+        incomingOfferRef.current = null;
         setCallerId(null);
         setReceiverId(null);
 
@@ -254,21 +285,10 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             pcRef.current = null;
         }
 
-        audioStreamProcessor.stop();
-
-        if (timerRef.current) {
-            clearInterval(timerRef.current);
-            timerRef.current = null;
-        }
-
         if (analysisStore.getState().isAnalyzing) {
-            const summary = await analysisStore.finishSession('WebRTC SFU');
-            if (summary) {
-                router.replace({
-                    pathname: '/live/result',
-                    params: { summaryId: summary.id },
-                } as any);
-            }
+            AnalysisService.stop();
+            // Optional: navigate to result screen
+            // router.replace(...) is handled if needed
         }
     };
 

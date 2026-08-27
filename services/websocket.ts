@@ -25,14 +25,24 @@ export class WebSocketStreamService {
     this.customBaseUrl = customBaseUrl;
   }
 
+  private sessionId?: string;
+  private clientId?: string;
+
   private getWsUrl(): string {
     const httpUrl = this.customBaseUrl || ApiService.getBaseUrl();
     const wsUrl = httpUrl.replace(/^http/, 'ws');
+    // If sessionId and clientId are provided, use the room-based hybrid endpoint
+    if (this.sessionId && this.clientId) {
+        return `${wsUrl}/ws/analyze/${this.sessionId}/${this.clientId}`;
+    }
     return `${wsUrl}/ws/analyze`;
   }
 
-  connect(sampleRate = 16000, channels = 1) {
+  connect(sessionId: string, clientId: string, sampleRate = 16000, channels = 1) {
     this.isIntentionallyClosed = false;
+    this.sessionId = sessionId;
+    this.clientId = clientId;
+
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -58,7 +68,10 @@ export class WebSocketStreamService {
       this.socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'prediction') {
+          
+          // In hybrid AI, we might receive predictions for the remote speaker.
+          // The prediction now includes "speaker_id".
+          if (data.type === 'prediction' || data.aiRisk !== undefined) {
             const pred: PredictionPoint = {
               id: `ws_pred_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
               timestamp: data.timestamp || Date.now(),
@@ -68,6 +81,7 @@ export class WebSocketStreamService {
               label: data.label || 'UNKNOWN',
               rms: data.rms ?? 0.0,
               inferenceTimeMs: data.inferenceTimeMs ?? 0.0,
+              speaker_id: data.speaker_id, // include speaker_id
             };
             this.callbacks.onPrediction(pred);
           } else if (data.type === 'error') {
@@ -102,7 +116,9 @@ export class WebSocketStreamService {
       this.setStatus('RECONNECTING', `Attempt ${this.reconnectAttempts} of ${this.maxReconnectAttempts}`);
       const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 8000);
       this.reconnectTimer = setTimeout(() => {
-        this.connect(sampleRate, channels);
+        if (this.sessionId && this.clientId) {
+          this.connect(this.sessionId, this.clientId, sampleRate, channels);
+        }
       }, delay);
     } else {
       this.setStatus('ERROR', 'Unable to reach VoiceGuard AI server after multiple attempts.');

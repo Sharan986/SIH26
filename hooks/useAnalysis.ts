@@ -13,8 +13,8 @@ export function useAnalysis() {
     () => analysisStore.getState()
   );
 
-  const startAnalysis = useCallback(async () => {
-    await AnalysisService.start();
+  const startAnalysis = useCallback(async (sessionId?: string, clientId?: string) => {
+    await AnalysisService.start(sessionId || `call_${Date.now()}`, clientId || 'unknown');
   }, []);
 
   const stopAnalysis = useCallback(async () => {

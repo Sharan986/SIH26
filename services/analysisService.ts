@@ -14,13 +14,12 @@ class AnalysisServiceClass {
   private chunkSub: any = null;
 
   // ── Start ──────────────────────────────────────────────────────────────────
-  async start(): Promise<void> {
+  async start(sessionId: string, clientId: string): Promise<void> {
     if (analysisStore.getState().isAnalyzing) {
       console.log('[AnalysisService] already analyzing, skipping start');
       return;
     }
 
-    const sessionId = `call_${Date.now()}`;
     analysisStore.startSession(sessionId);
 
     // 1. Check audio capability
@@ -72,8 +71,13 @@ class AnalysisServiceClass {
           }
         },
         onPrediction: (pred) => {
-          console.log('[AnalysisService] prediction received aiRisk:', pred.aiRisk);
-          analysisStore.addPrediction(pred);
+          console.log('[AnalysisService] prediction received aiRisk:', pred.aiRisk, 'speaker:', pred.speaker_id);
+          // Only add the prediction if it's from the remote peer, or if there is no speaker_id (fallback)
+          if (!pred.speaker_id || pred.speaker_id !== clientId) {
+             analysisStore.addPrediction(pred);
+             // Update audio level UI based on remote audio RMS
+             analysisStore.setAudioLevel(pred.rms, pred.rms * 100);
+          }
         },
         onError: (err) => {
           console.warn('[AnalysisService] WS error:', err);
@@ -82,12 +86,11 @@ class AnalysisServiceClass {
       },
       apiUrl
     );
-    this.ws.connect(16000, 1);
+    this.ws.connect(sessionId, clientId, 16000, 1);
 
     // 3. Subscribe to audio chunks and forward to WS
     this.chunkSub = CallAudioService.addAudioChunkListener((event: AudioChunkPayload) => {
       const status = this.ws?.getStatus();
-      console.log('[AnalysisService] audio chunk ready, WS status:', status);
       if (this.ws && status === 'CONNECTED') {
         this.ws.sendAudioChunk(event.audioBase64);
       }
