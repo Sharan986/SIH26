@@ -73,6 +73,9 @@ class SFUClient:
         self.pc: Optional[RTCPeerConnection] = None
         self.track: Optional[MediaStreamTrack] = None
         self.peer_client: Optional['SFUClient'] = None
+        # Flags to prevent race conditions when both on_track and handle_offer
+        # try to add tracks to the peer simultaneously
+        self.track_added_to_peer: bool = False
 
     async def send_msg(self, msg: dict):
         try:
@@ -99,8 +102,9 @@ async def handle_offer(client: SFUClient, offer_sdp: dict):
             processor_track = AudioProcessorTrack(track, client.client_id, client.websocket)
             client.track = relay.subscribe(processor_track)
             
-            # If the peer is already connected and waiting for this track, renegotiate
-            if client.peer_client and client.peer_client.pc:
+            # Only push track to peer if peer is already connected AND hasn't received our track yet
+            if client.peer_client and client.peer_client.pc and not client.track_added_to_peer:
+                client.track_added_to_peer = True
                 asyncio.ensure_future(add_track_to_peer(client.peer_client, client.track))
 
     # We must add a transceiver so the client knows we can send and receive audio
@@ -117,20 +121,40 @@ async def handle_offer(client: SFUClient, offer_sdp: dict):
         "sdp": {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
     })
 
-    # If the peer already has a track, add it to our PC
-    if client.peer_client and client.peer_client.track:
+    # If the peer already has a track ready and hasn't been added to us yet
+    if client.peer_client and client.peer_client.track and not client.peer_client.track_added_to_peer:
+        client.peer_client.track_added_to_peer = True
         asyncio.ensure_future(add_track_to_peer(client, client.peer_client.track))
 
 async def add_track_to_peer(client: SFUClient, track: MediaStreamTrack):
     logger.info(f"Adding remote track to {client.client_id}")
-    if client.pc:
+    if not client.pc:
+        return
+
+    # Check if we already have a sender for this track kind to avoid InvalidAccessError
+    existing_senders = [s for s in client.pc.getSenders() if s.track and s.track.kind == track.kind]
+    if existing_senders:
+        # Replace the existing track rather than adding a new one
+        logger.info(f"Replacing existing {track.kind} sender for {client.client_id}")
+        await existing_senders[0].replaceTrack(track)
+        # No need to renegotiate for replaceTrack
+        return
+
+    try:
         client.pc.addTrack(track)
+    except Exception as e:
+        logger.warning(f"addTrack failed for {client.client_id}: {e}")
+        return
+
+    try:
         offer = await client.pc.createOffer()
         await client.pc.setLocalDescription(offer)
         await client.send_msg({
             "type": "sfu:renegotiate",
             "sdp": {"sdp": client.pc.localDescription.sdp, "type": client.pc.localDescription.type}
         })
+    except Exception as e:
+        logger.error(f"Renegotiation failed for {client.client_id}: {e}")
 
 @router.websocket("/ws/sfu/{client_id}")
 async def websocket_sfu(websocket: WebSocket, client_id: str):
@@ -181,7 +205,10 @@ async def websocket_sfu(websocket: WebSocket, client_id: str):
                     if client.peer_client.pc:
                         await client.peer_client.pc.close()
                     client.peer_client.peer_client = None
+                    client.peer_client.track_added_to_peer = False
                     client.peer_client = None
+                client.track_added_to_peer = False
+                client.track = None
                 if client.pc:
                     await client.pc.close()
                     client.pc = None
