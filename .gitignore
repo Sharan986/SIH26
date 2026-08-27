@@ -16,35 +16,8 @@ android/.gradle/
 android/.idea/
 android/*.iml
 android/app/*.iml
-
-# Environment & Secrets
-.env
-.env.local
-*.pem
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
-
-# Dependencies
-node_modules/
-backend/venv/
-backend/__pycache__/
-backend/**/__pycache__/
-backend/.pytest_cache/
-*.pyc
-
-# Expo & Native builds
-.expo/
-dist/
-web-build/
-android/build/
-android/app/build/
-android/.gradle/
-android/.idea/
-android/*.iml
-android/app/*.iml
+modules/call-audio/android/build/
+modules/call-audio/android/.gradle/  
 
 # Environment & Secrets
 .env
@@ -59,8 +32,33 @@ android/app/*.iml
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Logs
+logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-modules/call-audio/android/build/
-modules/call-audio/android/.gradle/  
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+.nyc_output
+
+# Compiled binary addons
+build/Release
+
+# Next.js build output
+.next
+out
+
+# Nuxt.js build / generate output
+.nuxt
+.output
