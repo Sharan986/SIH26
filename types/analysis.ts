@@ -24,5 +24,6 @@ export interface AnalysisSummary {
   resultLabel: RiskLevel;
   mode: string;
   device: string;
+  localFilePath?: string;
   predictionTimeline: PredictionPoint[];
 }

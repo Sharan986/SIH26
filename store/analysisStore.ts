@@ -32,6 +32,7 @@ export interface AnalysisState {
   analysisDurationSec: number;
   isAnalyzing: boolean;
   activeSessionId: string | null;
+  localFilePath?: string;
   realThreshold: number;
   aiThreshold: number;
 }
@@ -54,6 +55,7 @@ class AnalysisStore {
     analysisDurationSec: 0,
     isAnalyzing: false,
     activeSessionId: null,
+    localFilePath: undefined,
     realThreshold: 30,
     aiThreshold: 60,
   };
@@ -161,13 +163,14 @@ class AnalysisStore {
       smoothedConfidence: 0,
       callDurationSec: 0,
       analysisDurationSec: 0,
+      localFilePath: undefined,
       screenState: 'CHECKING_AUDIO',
       errorMessage: undefined,
     });
   }
 
   async finishSession(deviceSummary = 'Android Device'): Promise<AnalysisSummary | null> {
-    const { activeSessionId, predictions, smoothedAiRisk, smoothedConfidence, analysisDurationSec, audioCapability } =
+    const { activeSessionId, predictions, smoothedAiRisk, smoothedConfidence, analysisDurationSec, audioCapability, localFilePath } =
       this.state;
 
     if (!activeSessionId) return null;
@@ -200,6 +203,7 @@ class AnalysisStore {
       resultLabel,
       mode: audioCapability?.audioSource ? `Direct Call (${audioCapability.audioSource})` : 'Microphone Path',
       device: `${deviceSummary}`,
+      localFilePath,
       predictionTimeline: predictions,
     };
 
@@ -226,6 +230,7 @@ class AnalysisStore {
       smoothedConfidence: 0,
       currentRms: 0,
       currentDb: -90,
+      localFilePath: undefined,
       screenState: 'IDLE',
       errorMessage: undefined,
     });

@@ -1,8 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useSyncExternalStore } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ShieldCheck, Play, ArrowRight, Activity, ShieldAlert, Cpu } from 'lucide-react-native';
-import { useCallState } from '../../hooks/useCallState';
+import { analysisStore } from '../../store/analysisStore';
 import { useCallAudio } from '../../hooks/useCallAudio';
 import { useHistory } from '../../hooks/useHistory';
 import { GlassCard } from '../../components/ui/GlassCard';
@@ -14,7 +14,11 @@ import { DisclaimerBanner } from '../../components/ui/DisclaimerBanner';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { callState } = useCallState();
+  // Read callState from the shared store (AppShell registers the native listener globally)
+  const { callState } = useSyncExternalStore(
+    (cb) => analysisStore.subscribe(cb),
+    () => analysisStore.getState()
+  );
   const { capability, checkCapability } = useCallAudio();
   const { history, isLoading, loadHistory } = useHistory();
 

@@ -84,10 +84,20 @@ class CallAudioModule : Module() {
             )
         }
 
-        Function("startCallAudioCapture") { sampleRate: Int?, windowSec: Int? ->
-            val context = appContext.reactContext ?: return@Function false
+        Function("startCallAudioCapture") { sampleRate: Int?, windowSec: Int?, saveLocal: Boolean?, autoSpeaker: Boolean? ->
+            val context = appContext.reactContext ?: return@Function mapOf("started" to false, "savedPath" to null)
             val rate = sampleRate ?: 16000
             val winSec = windowSec ?: 5
+            val shouldSave = saveLocal ?: false
+            val useSpeaker = autoSpeaker ?: false
+            
+            var savePath: String? = null
+            if (shouldSave) {
+                val timestamp = System.currentTimeMillis()
+                val cacheDir = context.cacheDir
+                val file = java.io.File(cacheDir, "call_recording_$timestamp.wav")
+                savePath = file.absolutePath
+            }
 
             if (audioCaptureEngine != null) {
                 audioCaptureEngine?.stop()
@@ -98,6 +108,8 @@ class CallAudioModule : Module() {
                 sampleRate = rate,
                 windowDurationSec = winSec,
                 intervalSec = 2.5,
+                saveFilePath = savePath,
+                autoSpeaker = useSpeaker,
                 onChunkReady = { base64Pcm, rms, durationSec, sampleCount ->
                     sendEvent("onAudioChunk", mapOf(
                         "audioBase64" to base64Pcm,
@@ -121,7 +133,12 @@ class CallAudioModule : Module() {
                 }
             )
 
-            audioCaptureEngine?.start() ?: false
+            val started = audioCaptureEngine?.start() ?: false
+            
+            mapOf(
+                "started" to started,
+                "savedPath" to (if (started) savePath else null)
+            )
         }
 
         Function("stopCallAudioCapture") {

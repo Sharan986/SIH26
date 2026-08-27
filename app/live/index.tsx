@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useSyncExternalStore } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -16,11 +15,10 @@ import {
   WifiOff,
   AlertTriangle,
   RefreshCw,
-  PhoneCall,
   Activity,
-  Layers,
   StopCircle,
 } from 'lucide-react-native';
+import { analysisStore } from '../../store/analysisStore';
 import { useAnalysis } from '../../hooks/useAnalysis';
 import { CircularRiskGauge } from '../../components/ui/CircularRiskGauge';
 import { WaveformVisualizer } from '../../components/ui/WaveformVisualizer';
@@ -32,6 +30,8 @@ import { DisclaimerBanner } from '../../components/ui/DisclaimerBanner';
 
 export default function LiveAnalysisScreen() {
   const router = useRouter();
+
+  // Read-only: consume global store state (analysis is owned by useAutoCallDetection at root)
   const {
     callState,
     screenState,
@@ -46,16 +46,13 @@ export default function LiveAnalysisScreen() {
     analysisDurationSec,
     predictions,
     isAnalyzing,
-    startAnalysis,
-    stopAnalysis,
-  } = useAnalysis();
+  } = useSyncExternalStore(
+    (cb) => analysisStore.subscribe(cb),
+    () => analysisStore.getState()
+  );
 
-  useEffect(() => {
-    // Automatically start analysis when entering screen
-    if (!isAnalyzing) {
-      startAnalysis();
-    }
-  }, [isAnalyzing, startAnalysis]);
+  // Only needed for the manual Stop button
+  const { stopAnalysis, startAnalysis } = useAnalysis();
 
   const handleStop = async () => {
     const summary = await stopAnalysis();

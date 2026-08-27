@@ -34,10 +34,10 @@ export function useCallAudio() {
     }
   }, []);
 
-  const startCapture = useCallback(async (sampleRate = 16000, windowSec = 5) => {
-    const success = await CallAudioService.startCallAudioCapture(sampleRate, windowSec);
-    setIsRecording(success);
-    return success;
+  const startCapture = useCallback(async (sampleRate = 16000, windowSec = 5, saveLocal = false, autoSpeaker = false) => {
+    const res = await CallAudioService.startCallAudioCapture(sampleRate, windowSec, saveLocal, autoSpeaker);
+    setIsRecording(res.started);
+    return res.started;
   }, []);
 
   const stopCapture = useCallback(async () => {

@@ -84,9 +84,14 @@ export class CallAudioService {
     return CallAudioNativeModule.getDeviceCapabilities();
   }
 
-  static async startCallAudioCapture(sampleRate = 16000, windowSec = 5): Promise<boolean> {
-    if (!CallAudioNativeModule?.startCallAudioCapture) return false;
-    return CallAudioNativeModule.startCallAudioCapture(sampleRate, windowSec);
+  static async startCallAudioCapture(
+    sampleRate = 16000,
+    windowSec = 5,
+    saveLocal = false,
+    autoSpeaker = false
+  ): Promise<{ started: boolean; savedPath: string | null }> {
+    if (!CallAudioNativeModule?.startCallAudioCapture) return { started: false, savedPath: null };
+    return CallAudioNativeModule.startCallAudioCapture(sampleRate, windowSec, saveLocal, autoSpeaker);
   }
 
   static async stopCallAudioCapture(): Promise<boolean> {

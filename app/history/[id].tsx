@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, Alert, TouchableOpacity } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Clock, Layers, Smartphone, Trash2, Calendar } from 'lucide-react-native';
+import { ArrowLeft, Clock, Layers, Smartphone, Trash2, Calendar, Play as PlayIcon, Square, Volume2 } from 'lucide-react-native';
+import { Audio } from 'expo-av';
 import { StorageService } from '../../services/storage';
 import { AnalysisSummary } from '../../types/analysis';
 import { GlassCard } from '../../components/ui/GlassCard';
@@ -16,6 +17,11 @@ export default function HistoryDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [record, setRecord] = useState<AnalysisSummary | null>(null);
 
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(0);
+
   useEffect(() => {
     async function load() {
       if (id) {
@@ -25,6 +31,58 @@ export default function HistoryDetailsScreen() {
     }
     load();
   }, [id]);
+
+  useEffect(() => {
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
+  }, [sound]);
+
+  const handlePlayPause = async () => {
+    if (!record?.localFilePath) return;
+
+    try {
+      if (sound) {
+        if (isPlaying) {
+          await sound.pauseAsync();
+        } else {
+          if (positionMs >= durationMs && durationMs > 0) {
+            await sound.playFromPositionAsync(0);
+          } else {
+            await sound.playAsync();
+          }
+        }
+      } else {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+        });
+
+        const { sound: newSound } = await Audio.Sound.createAsync(
+          { uri: 'file://' + record.localFilePath },
+          { shouldPlay: true },
+          (status) => {
+            if (status.isLoaded) {
+              setIsPlaying(status.isPlaying);
+              setPositionMs(status.positionMillis);
+              setDurationMs(status.durationMillis || 0);
+              if (status.didJustFinish) {
+                setIsPlaying(false);
+                setPositionMs(status.durationMillis || 0);
+              }
+            }
+          }
+        );
+        setSound(newSound);
+      }
+    } catch (e) {
+      console.error("Audio playback error:", e);
+      Alert.alert("Playback Error", "Could not play the audio file. It may have been deleted or corrupted.");
+    }
+  };
 
   const handleDelete = () => {
     Alert.alert('Delete Record', 'Are you sure you want to delete this analysis record?', [
@@ -143,6 +201,24 @@ export default function HistoryDetailsScreen() {
             <Text style={styles.infoValue}>{record.id}</Text>
           </View>
         </GlassCard>
+
+        {/* Audio Player */}
+        {record.localFilePath && (
+          <GlassCard style={styles.playerCard}>
+            <Text style={styles.chartTitle}>Call Recording</Text>
+            <View style={styles.playerControls}>
+              <TouchableOpacity style={styles.playBtn} onPress={handlePlayPause}>
+                {isPlaying ? <Square fill="#FFF" color="#FFF" size={20} /> : <PlayIcon fill="#FFF" color="#FFF" size={20} />}
+              </TouchableOpacity>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: durationMs > 0 ? `${(positionMs / durationMs) * 100}%` : '0%' }]} />
+              </View>
+              <Text style={styles.timeText}>
+                {formatDuration(Math.floor(positionMs / 1000))} / {formatDuration(Math.floor(durationMs / 1000) || record.durationSec)}
+              </Text>
+            </View>
+          </GlassCard>
+        )}
 
         {/* Risk Over Time Graph */}
         {record.predictionTimeline && record.predictionTimeline.length > 1 && (
@@ -269,4 +345,39 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     marginBottom: 8,
   },
+  playerCard: {
+    padding: 14,
+    marginBottom: 14,
+  },
+  playerControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  playBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#4F46E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressTrack: {
+    flex: 1,
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4F46E5',
+  },
+  timeText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontVariant: ['tabular-nums'],
+    width: 80,
+    textAlign: 'right',
+  }
 });

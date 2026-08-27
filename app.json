@@ -45,6 +45,13 @@
         {
           "microphonePermission": "VoiceGuard needs access to your microphone to capture and analyze voice authenticity during active phone checks."
         }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Allow VoiceGuard to access your camera for WebRTC.",
+          "microphonePermission": "Allow VoiceGuard to access your microphone for WebRTC."
+        }
       ]
     ],
     "scheme": "voiceguard",
