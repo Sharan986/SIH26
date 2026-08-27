@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import numpy as np
@@ -40,9 +41,15 @@ class VoiceGuardDetector:
             pass
         return "cpu"
 
+
     def load_model(self):
         """Loads pretrained Wav2Vec2 / Audio Classification model onto selected device."""
         if self.is_loaded:
+            return
+
+        if str(os.environ.get("MOCK_AI", "false")).lower() == "true":
+            logger.info("MOCK_AI is enabled. Bypassing ML model loading to save memory. Will use spectral fallback.")
+            self.is_loaded = False
             return
 
         logger.info(f"Loading deepfake detection model: {self.model_name} on {self.device}...")
