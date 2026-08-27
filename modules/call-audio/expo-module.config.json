@@ -1,0 +1,8 @@
+{
+  "name": "call-audio",
+  "platforms": ["android"],
+  "android": {
+    "package": "expo.modules.callaudio",
+    "modules": ["expo.modules.callaudio.CallAudioModule"]
+  }
+}

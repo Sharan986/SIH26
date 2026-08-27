@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">VoiceGuard Accessibility Service detects cellular phone call states to enable AI voice authenticity analysis during active calls.</string>
+</resources>
