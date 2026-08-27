@@ -49,7 +49,12 @@ class SettingsStore {
     this.state.isLoading = true;
     this.notify();
 
-    const customUrl = await StorageService.getCustomApiUrl();
+    let customUrl = await StorageService.getCustomApiUrl();
+    if (customUrl) {
+      customUrl = customUrl.trim();
+      if (!customUrl.startsWith('http') && !customUrl.startsWith('ws')) customUrl = 'https://' + customUrl;
+      if (customUrl.endsWith('/')) customUrl = customUrl.slice(0, -1);
+    }
     const thresholds = await StorageService.getThresholds();
     const devMode = await StorageService.isDevModeEnabled();
     const onboarding = await StorageService.isOnboardingCompleted();
@@ -68,8 +73,15 @@ class SettingsStore {
   }
 
   async setApiUrl(url: string) {
-    await StorageService.setCustomApiUrl(url);
-    this.state.apiUrl = url;
+    let normalizedUrl = url.trim();
+    if (normalizedUrl && !normalizedUrl.startsWith('http') && !normalizedUrl.startsWith('ws')) {
+      normalizedUrl = 'https://' + normalizedUrl;
+    }
+    if (normalizedUrl.endsWith('/')) {
+      normalizedUrl = normalizedUrl.slice(0, -1);
+    }
+    await StorageService.setCustomApiUrl(normalizedUrl);
+    this.state.apiUrl = normalizedUrl;
     this.notify();
   }
 
