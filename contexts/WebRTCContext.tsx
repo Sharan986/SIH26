@@ -9,11 +9,26 @@ import { useRouter } from 'expo-router';
 
 export type CallState = 'idle' | 'ringing' | 'connected' | 'ended';
 
-// P2P requires STUN
+// STUN + TURN servers to traverse strict NATs (different Wi-Fi/mobile networks)
 const ICE_SERVERS = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
     ],
 };
 
