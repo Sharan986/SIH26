@@ -11,6 +11,7 @@ export interface PredictionPoint {
   label: VoiceLabel;
   rms: number;
   inferenceTimeMs: number;
+  speaker_id?: string;
 }
 
 export interface AnalysisSummary {
