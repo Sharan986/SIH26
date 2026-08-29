@@ -82,6 +82,9 @@ export class WebSocketStreamService {
               rms: data.rms ?? 0.0,
               inferenceTimeMs: data.inferenceTimeMs ?? 0.0,
               speaker_id: data.speaker_id, // include speaker_id
+              blended_risk_score: data.blended_risk_score,
+              recommended_action: data.recommended_action,
+              metadata_applied: data.metadata_applied,
             };
             this.callbacks.onPrediction(pred);
           } else if (data.type === 'error') {

@@ -100,9 +100,38 @@ async def websocket_analyze_stream(websocket: WebSocket, session_id: str, client
                     processed, rms, is_valid, msg = preprocessor.preprocess(window, orig_sr=16000, channels=1)
 
                     prediction = detector.predict(processed, sample_rate=16000)
+                    
+                    # 1. Fetch Session Metadata
+                    from app.model.session_metadata_store import SessionMetadataStore
+                    store = SessionMetadataStore.get_instance()
+                    session_metadata = store.get_metadata(session_id)
+                    
+                    # 2. Run Contextual Risk Engine
+                    from app.model.risk_engine import RiskEngine
+                    risk_engine = RiskEngine.get_instance()
+                    blended_risk, recommended_action = risk_engine.evaluate(
+                        acoustic_ai_probability=prediction.aiRisk,
+                        metadata=session_metadata
+                    )
+                    
+                    # 3. Log to Privacy/Compliance Module (No audio saved)
+                    from app.core.privacy_logger import PrivacyLogger
+                    privacy_logger = PrivacyLogger.get_instance()
+                    privacy_logger.log_inference(
+                        session_id=session_id,
+                        speaker_id=client_id,
+                        acoustic_features={"rms": rms, "aiRisk": prediction.aiRisk, "inferenceTimeMs": prediction.inferenceTimeMs},
+                        blended_risk_score=blended_risk,
+                        recommended_action=recommended_action,
+                        session_metadata=session_metadata
+                    )
+
                     resp_dict = prediction.model_dump()
                     resp_dict["rms"] = round(rms, 4)
                     resp_dict["speaker_id"] = client_id
+                    resp_dict["blended_risk_score"] = blended_risk
+                    resp_dict["recommended_action"] = recommended_action
+                    resp_dict["metadata_applied"] = bool(session_metadata)
                     
                     # Broadcast prediction to all clients in the session
                     await manager.broadcast(resp_dict, session_id)
