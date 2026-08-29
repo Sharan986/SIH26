@@ -79,12 +79,15 @@ class VoiceGuardDetector:
 
     def predict(self, audio_samples: np.ndarray, sample_rate: int = 16000) -> PredictionResult:
         """
-        Runs real-time deepfake audio inference on 1D float32 audio waveform.
+        Inference pipeline (priority order):
+          1. HF Space API (starfish007/voice-deepfake-detector) — always tried first
+          2. Local Wav2Vec2 transformer model — if loaded
+          3. Spectral/acoustic heuristic fallback — always available
         """
         start_time = time.time()
         timestamp = int(time.time() * 1000)
 
-        # Basic energy/RMS check
+        # Basic energy/RMS check — skip silent frames
         rms = float(np.sqrt(np.mean(np.square(audio_samples)))) if len(audio_samples) > 0 else 0.0
         if rms < 0.003:
             return PredictionResult(
@@ -98,6 +101,36 @@ class VoiceGuardDetector:
                 details="Insufficient audio signal / silence"
             )
 
+        # ── Path 1: HF Space API ────────────────────────────────────────────
+        try:
+            from app.model.hf_space_client import HFSpaceClient
+            hf_client = HFSpaceClient.get_instance()
+            label_str, fake_prob, real_prob = hf_client.predict(audio_samples, sample_rate)
+
+            if label_str != "UNKNOWN":
+                if label_str == "AI-GENERATED":
+                    label = VoiceLabel.AI_GENERATED
+                elif label_str == "REAL":
+                    label = VoiceLabel.REAL
+                else:
+                    label = VoiceLabel.UNKNOWN
+
+                confidence = float(max(fake_prob, real_prob))
+                elapsed_ms = (time.time() - start_time) * 1000.0
+                return PredictionResult(
+                    label=label,
+                    aiRisk=round(fake_prob, 4),
+                    realProbability=round(real_prob, 4),
+                    confidence=round(confidence, 4),
+                    timestamp=timestamp,
+                    rms=round(rms, 4),
+                    inferenceTimeMs=round(elapsed_ms, 2),
+                    details="HF Space: starfish007/voice-deepfake-detector"
+                )
+        except Exception as e:
+            logger.warning(f"HF Space inference failed, falling back to local model: {e}")
+
+        # ── Path 2: Local Transformer Model ─────────────────────────────────
         if self.is_loaded and self.model is not None and self.feature_extractor is not None:
             try:
                 import torch
@@ -112,7 +145,6 @@ class VoiceGuardDetector:
                     logits = self.model(input_values).logits
                     probabilities = torch.softmax(logits, dim=-1).cpu().numpy()[0]
 
-                # Map id2label dynamically
                 fake_prob = 0.0
                 real_prob = 0.0
 
@@ -123,12 +155,10 @@ class VoiceGuardDetector:
                     elif any(k in label_name for k in ["real", "bonafide", "human", "0"]):
                         real_prob = float(prob)
 
-                # If single index or default binary
                 if fake_prob == 0.0 and real_prob == 0.0 and len(probabilities) >= 2:
                     fake_prob = float(probabilities[1])
                     real_prob = float(probabilities[0])
 
-                # Determine label & confidence
                 confidence = float(max(fake_prob, real_prob))
                 if fake_prob >= 0.60:
                     label = VoiceLabel.AI_GENERATED
@@ -138,7 +168,6 @@ class VoiceGuardDetector:
                     label = VoiceLabel.UNKNOWN
 
                 elapsed_ms = (time.time() - start_time) * 1000.0
-
                 return PredictionResult(
                     label=label,
                     aiRisk=round(fake_prob, 4),
@@ -147,13 +176,14 @@ class VoiceGuardDetector:
                     timestamp=timestamp,
                     rms=round(rms, 4),
                     inferenceTimeMs=round(elapsed_ms, 2),
-                    details=f"Inference via {self.model_name}"
+                    details=f"Local model: {self.model_name}"
                 )
             except Exception as e:
-                logger.error(f"Inference error: {e}", exc_info=True)
+                logger.error(f"Local model inference error: {e}", exc_info=True)
 
-        # Fallback Spectral/Acoustic Feature Extraction Analyzer (used when deep learning weights are downloading/offline)
+        # ── Path 3: Spectral / Acoustic Heuristic Fallback ──────────────────
         return self._spectral_feature_inference(audio_samples, sample_rate, rms, start_time, timestamp)
+
 
     def _spectral_feature_inference(
         self,
