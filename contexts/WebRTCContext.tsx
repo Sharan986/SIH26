@@ -9,27 +9,47 @@ import { useRouter } from 'expo-router';
 
 export type CallState = 'idle' | 'ringing' | 'connected' | 'ended';
 
-// STUN + TURN servers to traverse strict NATs (different Wi-Fi/mobile networks)
+// STUN + TURN servers to traverse strict NATs (CGNAT on mobile/long-distance)
+// Multiple TURN providers for redundancy — the first one to respond wins.
 const ICE_SERVERS = {
     iceServers: [
+        // STUN — fast, no relay, works for non-symmetric NAT
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        // OpenRelay TURN — UDP port 80 (most permissive)
         {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
             credential: 'openrelayproject',
         },
+        // OpenRelay TURN — UDP port 443
         {
             urls: 'turn:openrelay.metered.ca:443',
             username: 'openrelayproject',
             credential: 'openrelayproject',
         },
+        // OpenRelay TURN — TCP port 443 (bypasses UDP blocks on strict mobile networks)
         {
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject',
         },
+        // Backup TURN via relay.metered.ca (same provider, different hostname)
+        {
+            urls: 'turn:relay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turn:relay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
     ],
+    // Pre-gather ICE candidates in background to reduce connection time
+    iceCandidatePoolSize: 10,
 };
 
 interface WebRTCContextType {
